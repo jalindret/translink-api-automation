@@ -1,3 +1,4 @@
+
 name: TransLink API Tests and Allure Report
 
 on:
@@ -18,9 +19,12 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
+      # 1. Checkout repository
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # 2. Configure Java 17
       - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
@@ -28,11 +32,13 @@ jobs:
           java-version: '17'
           cache: maven
 
+      # 3. Configure Node.js for Allure CLI
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '24'
 
+      # 4. Run JUnit tests
       - name: Execute JUnit Tests
         id: tests
         continue-on-error: true
@@ -40,26 +46,47 @@ jobs:
           TRANSLINK_API_KEY: ${{ secrets.TRANSLINK_API_KEY }}
         run: mvn --batch-mode clean test
 
-      - name: Generate Allure HTML Report
+      # 5. Generate standalone Allure HTML
+      # Uses allurerc.mjs from the repository
+      - name: Generate Standalone Allure Report
         if: always()
         run: |
-          if [ -d "allure-results" ]; then
+          if [ -d "allure-results" ] && \
+             [ -n "$(find allure-results -name '*-result.json' -print -quit)" ]; then
+
+            echo "Generating standalone Allure HTML report..."
+
             npx --yes allure@3.33.0 generate \
               ./allure-results \
-              --output ./allure-report
+              --config ./allurerc.mjs
+
           else
-            echo "No Allure results found."
+            echo "No Allure test results available."
           fi
 
-      - name: Upload Allure Report
+      # 6. Verify HTML report was created
+      - name: Verify Standalone HTML Report
+        if: always()
+        run: |
+          if [ -f "allure-report/index.html" ]; then
+            echo "Standalone Allure HTML generated successfully."
+            ls -lh allure-report/index.html
+          else
+            echo "ERROR: Standalone Allure HTML report missing."
+            exit 1
+          fi
+
+      # 7. Upload standalone Allure report
+      - name: Upload Allure HTML Report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: translink-allure-report
-          path: allure-report/
-          if-no-files-found: warn
+          name: translink-allure-html
+          path: allure-report/index.html
+          if-no-files-found: error
           retention-days: 30
 
+      # 8. Upload Maven/JUnit test results
       - name: Upload JUnit Test Results
         if: always()
         uses: actions/upload-artifact@v4
@@ -69,6 +96,13 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+      # 9. Preserve test failure status
       - name: Enforce Test Result
-        if: steps.tests.outcome == 'failure'
-        run: exit 1
+        if: always()
+        run: |
+          if [ "${{ steps.tests.outcome }}" = "failure" ]; then
+            echo "JUnit test execution failed."
+            exit 1
+          fi
+
+          echo "JUnit test execution successful."
